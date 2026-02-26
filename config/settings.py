@@ -33,7 +33,7 @@ SECRET_KEY = 'django-insecure-zp43*(at-&hn&v9(^6@gpad487o2_eq_a=uqlpx5^whu#=xz=n
 SECRET_KEY = os.getenv("SECRET_KEY")
 DEBUG = os.getenv("DEBUG") == "True"
 
-ALLOWED_HOSTS = ["jamiaislamiyat.in", "www.jamiaislamiyat.in"]
+ALLOWED_HOSTS = ["jamiaislamiyat.in", "www.jamiaislamiyat.in", "api.jamiaislamiyat.in", "187.77.185.192"]
 
 
 DATABASES = {
@@ -185,12 +185,26 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# CORS_ALLOW_ALL_ORIGINS = True  
+# CORS_ALLOW_ALL_ORIGINS = True 
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
     "https://jamiaislamiyat.in",
+    "https://www.jamiaislamiyat.in",
+    "https://api.jamiaislamiyat.in",
 ]
+
+CORS_ALLOW_CREDENTIALS = True
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://jamiaislamiyat.in",
+    "https://www.jamiaislamiyat.in",
+    "https://api.jamiaislamiyat.in",
+]
+
+SECURE_SSL_REDIRECT = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
