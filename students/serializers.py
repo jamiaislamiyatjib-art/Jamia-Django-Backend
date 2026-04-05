@@ -15,16 +15,17 @@ from .models import Center
 #     paper4 = serializers.IntegerField(allow_null=True, required=False)
     
 #     admission_type = serializers.CharField(read_only=True)
-    
-#     center_id = serializers.CharField(
-#         source="center.center_id",
-#         read_only=True
+
+#     # For writes
+#     center = serializers.PrimaryKeyRelatedField(
+#         queryset=Center.objects.all(), 
+#         required=False, 
+#         allow_null=True
 #     )
 
-#     center_name = serializers.CharField(
-#         source="center.center.name",
-#         read_only=True
-#     )
+#     # For reads only
+#     center_id = serializers.CharField(source="center.center_id", read_only=True)
+#     center_name = serializers.CharField(source="center.name", read_only=True)
 
 #     class Meta:
 #         model = Student
@@ -38,36 +39,90 @@ from .models import Center
 #         )
 
 
+
 class StudentSerializer(serializers.ModelSerializer):
     paper1 = serializers.IntegerField(allow_null=True, required=False)
     paper2 = serializers.IntegerField(allow_null=True, required=False)
     paper3 = serializers.IntegerField(allow_null=True, required=False)
     paper4 = serializers.IntegerField(allow_null=True, required=False)
-    
+
     admission_type = serializers.CharField(read_only=True)
 
-    # For writes
     center = serializers.PrimaryKeyRelatedField(
-        queryset=Center.objects.all(), 
-        required=False, 
+        queryset=Center.objects.all(),
+        required=False,
         allow_null=True
     )
 
-    # For reads only
-    center_id = serializers.CharField(source="center.center_id", read_only=True)
-    center_name = serializers.CharField(source="center.name", read_only=True)
+    center_id = serializers.SerializerMethodField()
+    center_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Student
-        fields = '__all__'
-        read_only_fields = (
+        fields = [
+            "id",
+            "student_id",
+            "roll_no",
+            "enroll_no",
+            "student_name",
+            "father_husband_name",
+            "gender",
+            "student_class",
+            "session",
+            "medium",
+            "city",
+            "place",
+            "paper1",
+            "paper2",
+            "paper3",
+            "paper4",
+            "center",
+            "center_id",
+            "center_name",
             "total",
             "avg_percentage",
             "result",
             "division",
             "grand_total",
-        )
+            "admission_type",
+        ]
 
+    # 🔍 DEBUG CENTER ID
+    def get_center_id(self, obj):
+        print("------ CENTER DEBUG START ------")
+        print("Student:", obj.student_name)
+        print("Center object:", obj.center)
+
+        if obj.center:
+            print("Center ID:", obj.center.center_id)
+            print("Center Name:", obj.center.center_name)
+            print("------ CENTER DEBUG END ------")
+            return obj.center.center_id
+
+        print("Center is NULL")
+        print("------ CENTER DEBUG END ------")
+        return None
+
+    # 🔍 DEBUG CENTER NAME
+    def get_center_name(self, obj):
+        if obj.center:
+            return obj.center.center_name
+        return None
+
+    # 🔍 FULL SERIALIZER DEBUG
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+
+        print("\n========= STUDENT SERIALIZER DEBUG =========")
+        print("Student Name:", instance.student_name)
+        print("Center:", instance.center)
+        print("Center ID:", getattr(instance.center, "center_id", None))
+        print("Center Name:", getattr(instance.center, "center_name", None))
+        print("Serialized Data:", data)
+        print("===========================================\n")
+
+        return data
+    
 
 class StandardResultsSetPagination(PageNumberPagination):
     page_size = 10
@@ -77,6 +132,7 @@ class StandardResultsSetPagination(PageNumberPagination):
 
 class StudentResultSerializer(serializers.ModelSerializer):
     center_name = serializers.CharField(source="center.center_name", read_only=True)
+    center_id = serializers.CharField(source="center.center_id", read_only=True)
 
     class Meta:
         model = Student
@@ -97,6 +153,7 @@ class StudentResultSerializer(serializers.ModelSerializer):
             "division",
             "city",
             "center_name",
+            "center_id"
             "is_published",
         ]
 
@@ -144,11 +201,13 @@ class LifafaSerializer(serializers.ModelSerializer):
             "city", "place", "center_name"
         ]
         
-        
+    
 
 
 class MarksheetSerializer(serializers.ModelSerializer):
-    center_name = serializers.CharField(source="center.center_name", read_only=True)
+
+    center_name = serializers.SerializerMethodField()
+    center_id = serializers.SerializerMethodField()
     max_total = serializers.SerializerMethodField()
     total_words = serializers.SerializerMethodField()
 
@@ -172,13 +231,30 @@ class MarksheetSerializer(serializers.ModelSerializer):
             "result",
             "division",
             "center_name",
+            "center_id",
             "max_total",
             "total_words",
         ]
 
+    # ✅ CENTER NAME
+    def get_center_name(self, obj):
+        print("Marksheet Center:", obj.center)
+
+        if obj.center:
+            return obj.center.center_name
+        return None
+
+    # ✅ CENTER ID
+    def get_center_id(self, obj):
+        if obj.center:
+            return obj.center.center_id
+        return None
+
+    # ✅ TOTAL IN WORDS
     def get_total_words(self, obj):
         return num2words(obj.total).title() if obj.total else "Zero"
 
+    # ✅ MAX TOTAL
     def get_max_total(self, obj):
         return obj.grand_total
     
@@ -196,8 +272,10 @@ class MeritListSerializer(serializers.Serializer):
 
 
 class ReportRowSerializer(serializers.ModelSerializer):
-    center_name = serializers.CharField(source="center.center_name", read_only=True)
     center_id = serializers.CharField(source="center.center_id", read_only=True)
+    center_name = serializers.CharField(source="center.center_name", read_only=True)
+    state = serializers.CharField(source="center.state", read_only=True)
+    city = serializers.CharField(source="center.city", read_only=True)
 
     class Meta:
         model = Student
@@ -211,10 +289,12 @@ class ReportRowSerializer(serializers.ModelSerializer):
             "student_class",
             "session",
             "medium",
-            "city",
+            "division",
+            "result",
+            "avg_percentage",
+            # "admission_type",
             "center_id",
             "center_name",
-            "result",
-            "division",
-            "avg_percentage",
+            "state",
+            "city",
         ]

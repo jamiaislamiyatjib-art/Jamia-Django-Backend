@@ -39,4 +39,4 @@ class ExamTimeTable(models.Model):
         verbose_name_plural = "Exam Time Tables"
 
     def __str__(self):
-        return f"{self.center} | {self.exam_date} | {self.paper}"
+        return f"{self.center or 'GLOBAL'} | {self.exam_date} | {self.paper}"

@@ -46,6 +46,14 @@ class Student(models.Model):
     null=True,
     blank=True
 )
+    
+    center_new = models.ForeignKey(
+    Center,
+    on_delete=models.SET_NULL,
+    null=True,
+    blank=True,
+    related_name="+"
+)
 
     gender = models.CharField(max_length=20, choices=GENDER_CHOICES)
     place = models.CharField(max_length=100, blank=True, null=True)

@@ -3,6 +3,8 @@
 from django.db.models import Q, F, Count, Case, When, Value, CharField, Max
 from django.db.models.functions import Coalesce
 from django.db import transaction
+from .pagination import StudentReportPagination
+from .serializers import ReportRowSerializer
 
 # DRF imports
 from rest_framework import viewsets, filters, status
@@ -32,6 +34,29 @@ from .serializers import (
     LifafaSerializer
 )
 from .pagination import MeritPagination, StandardResultsSetPagination
+
+
+# ----------------------------------------
+# CLASS NAME NORMALIZER
+# ----------------------------------------
+def normalize_class_name(name):
+    if not name:
+        return ""
+
+    name = name.lower().replace("-", "_").replace(" ", "_")
+
+    mapping = {
+        "aliya_saal_awwal": "ALIYA SAAL AWWAL",
+        "aliya_saal_doam": "ALIYA SAAL DOAM",
+        "ibtidai_saal_awwal": "IBTIDAI SAAL AWWAL",
+        "ibtidai_saal_doam": "IBTIDAI SAAL DOAM",
+        "sanviya_saal_awwal": "SANVIYA SAAL AWWAL",
+        "sanviya_saal_doam": "SANVIYA SAAL DOAM",
+    }
+
+    return mapping.get(name, name.upper())
+
+
 
 
 
@@ -79,6 +104,7 @@ class StandardResultsSetPagination(PageNumberPagination):
 
 
 class StudentViewSet(viewsets.ModelViewSet):
+    queryset = Student.objects.select_related("center").all()
     serializer_class = StudentSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
@@ -102,7 +128,8 @@ class StudentViewSet(viewsets.ModelViewSet):
             return Student.objects.none()
 
         # Base queryset
-        queryset = Student.objects.all().order_by("id")
+        # queryset = Student.objects.all().order_by("id")
+        queryset = Student.objects.select_related("center").all().order_by("id")
 
         # 🔒 Staff restriction
         if getattr(user, "role", None) == "staff":
@@ -110,10 +137,13 @@ class StudentViewSet(viewsets.ModelViewSet):
             if not center:
                 return Student.objects.none()
             queryset = queryset.filter(center=center)
+        
+
 
         # Query param filters
         session = self.request.query_params.get("session")
         student_class = self.request.query_params.get("student_class")
+        center_id = self.request.query_params.get("center_id")
         search = self.request.query_params.get("search")
         student_id = self.request.query_params.get("student_id")
         global_search = self.request.query_params.get("global")
@@ -140,6 +170,9 @@ class StudentViewSet(viewsets.ModelViewSet):
             
         if session:
             queryset = queryset.filter(session=session)
+            
+        if center_id and center_id != "ALL":
+            queryset = queryset.filter(center__center_id=center_id)
 
         if student_class and student_class != "ALL":
             queryset = queryset.filter(student_class=student_class)
@@ -251,6 +284,21 @@ class StudentViewSet(viewsets.ModelViewSet):
             {"message": f"Student promoted to {next_class} ({next_session}) successfully."},
             status=status.HTTP_201_CREATED
         )
+        
+    def update(self, request, *args, **kwargs):
+        print("===== DEBUG START =====")
+        print("Request data:", request.data)  # Show what frontend sent
+        print("kwargs:", kwargs)
+        print("Student instance:", self.get_object())
+        print("===== DEBUG END =====")
+
+        serializer = self.get_serializer(self.get_object(), data=request.data, partial=True)
+        if serializer.is_valid():
+            self.perform_update(serializer)
+            return Response(serializer.data)
+        else:
+            print("Serializer errors:", serializer.errors)  # Key debug info
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         
     
@@ -288,15 +336,22 @@ class StudentViewSet(viewsets.ModelViewSet):
             "note": "Preview only. Final values assigned on save.",
         })
 
-
+    
     # ================= PERFORM CREATE =================
     def perform_create(self, serializer):
         user = self.request.user
-        if getattr(user, "role", None) == "staff":
-            serializer.save(center=getattr(user, "center", None))
-        else:
-            serializer.save()
-    
+
+        with transaction.atomic():
+
+            if getattr(user, "role", None) == "staff":
+                serializer.save(
+                    center=getattr(user, "center", None),
+                    is_admit_card_published=True  
+                )
+            else:
+                serializer.save(
+                    is_admit_card_published=True 
+                )
    
     # ================= TOGGLE PUBLISH =================
     @action(detail=True, methods=["post"])
@@ -308,28 +363,50 @@ class StudentViewSet(viewsets.ModelViewSet):
             "message": "Publish status updated",
             "is_published": student.is_published
         })
+    
 
-    # ================= BULK PUBLISH =================
+    
+    # ================= BULK PUBLISH (CENTER BASED) =================
     @action(detail=False, methods=["post"])
     def bulk_publish(self, request):
-        student_class = request.data.get("student_class")
+
+        center_id = request.data.get("center_id")
         session = request.data.get("session")
         publish = request.data.get("publish", True)
 
-        if not student_class or not session:
+        publish = True if str(publish).lower() == "true" else False
+
+        if not session:
             return Response(
-                {"error": "student_class and session are required"},
+                {"error": "Session is required"},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        qs = Student.objects.filter(student_class=student_class, session=session)
+        # 🔒 Use get_queryset (respects staff center restriction)
+        qs = self.get_queryset()
+
+        print(f"[DEBUG] Center received: {center_id}")
+        print(f"[DEBUG] Session received: {session}")
+        print(f"[DEBUG] Total students before filter: {qs.count()}")
+
+        if center_id and center_id != "ALL":
+            qs = qs.filter(center__center_id=str(center_id).strip())
+            print(f"[DEBUG] After center filter: {qs.count()}")
+
+        qs = qs.filter(session=str(session).strip())
+        print(f"[DEBUG] After session filter: {qs.count()}")
+
         updated_count = qs.update(is_published=publish)
 
+        print(f"[DEBUG] Updated: {updated_count}")
+
         return Response({
-            "message": "Bulk publish updated successfully",
+            "message": f"{updated_count} students updated successfully",
             "updated": updated_count
         })
-        
+            
+            
+            
     @action(detail=True, methods=["post"])
     def toggle_admit_publish(self, request, pk=None):
         student = self.get_object()
@@ -373,7 +450,8 @@ class StudentViewSet(viewsets.ModelViewSet):
             qs = qs.filter(is_published=True)
 
         session = request.query_params.get("session")
-        gender = request.query_params.get("gender")  # gender filter
+        gender = request.query_params.get("gender")
+        center = request.query_params.get("center")
 
         if session:
             qs = qs.filter(session=session)
@@ -381,14 +459,28 @@ class StudentViewSet(viewsets.ModelViewSet):
         if gender:
             qs = qs.filter(gender__iexact=gender)
 
+        if center:
+            # qs = qs.filter(center_id=center)
+            if center and center.isdigit():
+                qs = qs.filter(center__id=int(center))
+
+        # ================= RESULT CONDITIONS =================
+
+        pass_q = Q(result__iexact="Pass")
+        fail_q = Q(result__iexact="Fail")
+
+        # match Suppli / Supplie / SUPPLI / supply
+        suppli_q = Q(result__icontains="suppl")
+
         # ================= OVERALL =================
+
         total = qs.count()
         absent = qs.filter(grand_total=0).count()
         present = total - absent
 
-        pass_count = qs.filter(result__iexact="Pass").count()
-        fail_count = qs.filter(result__iexact="Fail").count()
-        supplie_count = qs.filter(result__iexact="Supplie").count()
+        pass_count = qs.filter(pass_q).count()
+        fail_count = qs.filter(fail_q).count()
+        supplie_count = qs.filter(suppli_q).count()
 
         overall = {
             "total": total,
@@ -403,8 +495,9 @@ class StudentViewSet(viewsets.ModelViewSet):
         }
 
         # ================= CLASS GROUPS =================
+
         CLASS_GROUPS = [
-            ("IBTIDAIYA SAAL AWWAL", ["IBTIDAI SAAL AWWAL","IBTIDAI_SAAL_AWWAL"]),
+            ("IBTIDAIYA SAAL AWWAL", ["IBTIDAI SAAL AWWAL", "IBTIDAI_SAAL_AWWAL"]),
             ("IBTIDAIYA SAAL DOWM", ["IBTIDAI SAAL DOAM", "IBTIDAI_SAAL_DOAM"]),
             ("SANIYA SAAL AWWAL", ["SANVIYA SAAL AWWAL", "SANVIYA_SAAL_AWWAL"]),
             ("SANIYA SAAL DOWM", ["SANVIYA SAAL DOAM", "SANVIYA_SAAL_DOAM"]),
@@ -413,37 +506,77 @@ class StudentViewSet(viewsets.ModelViewSet):
         ]
 
         class_summary = []
+
         for title, values in CLASS_GROUPS:
-            # Filter students matching any of the class identifiers
+
             condition = Q()
             for value in values:
                 condition |= Q(student_class__iexact=value)
+
             cqs = qs.filter(condition)
 
             total_cls = cqs.count()
             absent_cls = cqs.filter(grand_total=0).count()
             present_cls = total_cls - absent_cls
-            pass_cls = cqs.filter(result__iexact="Pass").count()
-            fail_cls = cqs.filter(result__iexact="Fail").count()
-            supplie_cls = cqs.filter(result__iexact="Supplie").count()
 
             class_summary.append({
                 "title": title,
                 "total": total_cls,
                 "present": present_cls,
                 "absent": absent_cls,
-                "pass": pass_cls,
-                "fail": fail_cls,
-                "suppli": supplie_cls,
+                "pass": cqs.filter(pass_q).count(),
+                "fail": cqs.filter(fail_q).count(),
+                "suppli": cqs.filter(suppli_q).count(),
                 "first": cqs.filter(division="First Division").count(),
                 "second": cqs.filter(division="Second Division").count(),
                 "third": cqs.filter(division="Third Division").count(),
             })
 
+        # ================= YEAR-WISE SUMMARY =================
+
+        sessions = qs.values_list("session", flat=True).distinct().order_by("session")
+
+        yearly_summary = []
+
+        for year in sessions:
+
+            yqs = qs.filter(session=year)
+
+            total_y = yqs.count()
+            absent_y = yqs.filter(grand_total=0).count()
+            present_y = total_y - absent_y
+
+            yearly_summary.append({
+                "session": year,
+                "total": total_y,
+                "present": present_y,
+                "absent": absent_y,
+                "pass": yqs.filter(pass_q).count(),
+                "fail": yqs.filter(fail_q).count(),
+                "suppli": yqs.filter(suppli_q).count(),
+                "first": yqs.filter(division="First Division").count(),
+                "second": yqs.filter(division="Second Division").count(),
+                "third": yqs.filter(division="Third Division").count(),
+            })
+
         return Response({
             "overall": overall,
-            "classes": class_summary
+            "classes": class_summary,
+            "yearly_summary": yearly_summary
         })
+        
+    @action(detail=False, methods=["get"], url_path="sessions")
+    def sessions(self, request):
+
+        qs = self.get_queryset()
+
+        sessions = (
+            qs.values_list("session", flat=True)
+            .distinct()
+            .order_by("-session")
+        )
+
+        return Response(list(sessions))
 
     def create(self, request, *args, **kwargs):
         print("\n========== STUDENT CREATE DEBUG ==========")
@@ -471,27 +604,124 @@ class StudentViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
         
     
+    # @action(detail=False, methods=["get"], url_path="reports")
+    # def reports(self, request):
+    #     report_type = request.query_params.get("type")
+    #     session = request.query_params.get("session")
+    #     student_class = request.query_params.get("student_class")
+    #     value = request.query_params.get("value")
+
+    #     # ---------------- REQUIRED PARAMS ----------------
+    #     if not report_type or not session:
+    #         return Response(
+    #             {"error": "type and session are required"},
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
+
+    #     # ---------------- BASE QUERYSET ----------------
+    #     base_qs = self.get_queryset().filter(session=session)
+    #     if student_class and student_class.upper() != "ALL":
+    #         base_qs = base_qs.filter(student_class=student_class)
+
+    #     # ---------------- FILTERED QUERYSET ----------------
+    #     # Annotate admission_type so it's always available
+    #     qs = base_qs.annotate(
+    #         admission_type=Case(
+    #             When(is_admit_card_published=True, then=Value("ADMITTED")),
+    #             When(is_admit_card_published=False, then=Value("NOT ADMITTED")),
+    #             default=Value("UNKNOWN"),
+    #             output_field=CharField(),
+    #         )
+    #     )
+
+    #     # ---------------- APPLY FILTERS ----------------
+    #     if report_type == "gender" and value:
+    #         qs = qs.filter(gender=value)
+    #     elif report_type == "admission" and value:
+    #         qs = qs.filter(admission_type=value)
+    #     elif report_type == "result" and value:
+    #         qs = qs.filter(result=value)
+    #     elif report_type == "percentage" and value:
+    #         try:
+    #             min_p, max_p = map(float, value.split("-"))
+    #             qs = qs.filter(avg_percentage__gte=min_p, avg_percentage__lte=max_p)
+    #         except Exception:
+    #             pass
+    #     elif report_type == "division" and value:
+    #         qs = qs.filter(division=value)
+    #     elif report_type == "center" and value:
+    #         qs = qs.filter(center__center_id=value)
+    #     elif report_type == "medium" and value:
+    #         qs = qs.filter(medium=value)
+
+    #     # ---------------- BUILD SUMMARY ----------------
+    #     summary = {}
+
+    #     def build_summary(field_name):
+    #         return qs.values(field_name).annotate(count=Count("id")).order_by(field_name)
+
+    #     if report_type == "gender":
+    #         summary = {row["gender"] or "OTHER": row["count"] for row in build_summary("gender")}
+    #     elif report_type == "result":
+    #         summary = {row["result"] or "UNKNOWN": row["count"] for row in build_summary("result")}
+    #     elif report_type == "division":
+    #         summary = {row["division"] or "NA": row["count"] for row in build_summary("division")}
+    #     elif report_type == "medium":
+    #         summary = {row["medium"] or "NA": row["count"] for row in build_summary("medium")}
+    #     elif report_type == "class":
+    #         summary = {row["student_class"] or "NA": row["count"] for row in build_summary("student_class")}
+    #     elif report_type == "center":
+    #         summary = {row["center__center_id"] or "NA": row["count"] for row in build_summary("center__center_id")}
+    #     elif report_type == "admission":
+    #         summary = {row["admission_type"] or "NA": row["count"] for row in build_summary("admission_type")}
+    #     elif report_type == "percentage":
+    #         # Optional: summary by range buckets
+    #         summary = {}
+    #     else:
+    #         return Response({"error": "Invalid report type"}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     # ---------------- SERIALIZER ----------------
+    #     serializer = self.get_serializer(qs, many=True)
+
+    #     # ---------------- RESPONSE ----------------
+    #     return Response(
+    #         {
+    #             "results": serializer.data,
+    #             "total": qs.count(),
+    #             "grand_total": base_qs.count(),
+    #             "summary": summary,
+    #             "report_type": report_type,
+    #         },
+    #         status=status.HTTP_200_OK,
+    #     )
+        
+   
+    
+    
     @action(detail=False, methods=["get"], url_path="reports")
     def reports(self, request):
+
         report_type = request.query_params.get("type")
         session = request.query_params.get("session")
         student_class = request.query_params.get("student_class")
         value = request.query_params.get("value")
 
-        # ---------------- REQUIRED PARAMS ----------------
+        state = request.query_params.get("state")
+        city = request.query_params.get("city")
+        center = request.query_params.get("center")
+
         if not report_type or not session:
             return Response(
                 {"error": "type and session are required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ---------------- BASE QUERYSET ----------------
+        # ================= BASE QUERY =================
         base_qs = self.get_queryset().filter(session=session)
-        if student_class and student_class.upper() != "ALL":
-            base_qs = base_qs.filter(student_class=student_class)
 
-        # ---------------- FILTERED QUERYSET ----------------
-        # Annotate admission_type so it's always available
+        if student_class and student_class.upper() != "ALL":
+            base_qs = base_qs.filter(student_class__iexact=student_class)
+
         qs = base_qs.annotate(
             admission_type=Case(
                 When(is_admit_card_published=True, then=Value("ADMITTED")),
@@ -501,68 +731,118 @@ class StudentViewSet(viewsets.ModelViewSet):
             )
         )
 
-        # ---------------- APPLY FILTERS ----------------
+        # ================= COMMON FILTER =================
+        if state:
+            qs = qs.filter(center__state__iexact=state)
+
+        if city:
+            qs = qs.filter(center__city__iexact=city)
+
+        if center:
+            qs = qs.filter(center__center_id=center)
+
+        # ================= REPORT TYPE FILTER =================
         if report_type == "gender" and value:
             qs = qs.filter(gender=value)
+
         elif report_type == "admission" and value:
             qs = qs.filter(admission_type=value)
+
         elif report_type == "result" and value:
             qs = qs.filter(result=value)
+
         elif report_type == "percentage" and value:
             try:
                 min_p, max_p = map(float, value.split("-"))
-                qs = qs.filter(avg_percentage__gte=min_p, avg_percentage__lte=max_p)
-            except Exception:
+                qs = qs.filter(
+                    avg_percentage__gte=min_p,
+                    avg_percentage__lte=max_p
+                )
+            except:
                 pass
+
         elif report_type == "division" and value:
             qs = qs.filter(division=value)
+
         elif report_type == "center" and value:
             qs = qs.filter(center__center_id=value)
+
         elif report_type == "medium" and value:
             qs = qs.filter(medium=value)
 
-        # ---------------- BUILD SUMMARY ----------------
+        elif report_type == "class" and value:
+            qs = qs.filter(student_class__iexact=value)
+
+        # ================= SUMMARY =================
         summary = {}
 
-        def build_summary(field_name):
-            return qs.values(field_name).annotate(count=Count("id")).order_by(field_name)
+        def build_summary(field):
+            return qs.values(field).annotate(count=Count("id"))
 
         if report_type == "gender":
-            summary = {row["gender"] or "OTHER": row["count"] for row in build_summary("gender")}
+            summary = {row["gender"]: row["count"] for row in build_summary("gender")}
+
         elif report_type == "result":
-            summary = {row["result"] or "UNKNOWN": row["count"] for row in build_summary("result")}
+            summary = {row["result"]: row["count"] for row in build_summary("result")}
+
         elif report_type == "division":
-            summary = {row["division"] or "NA": row["count"] for row in build_summary("division")}
+            summary = {row["division"]: row["count"] for row in build_summary("division")}
+
         elif report_type == "medium":
-            summary = {row["medium"] or "NA": row["count"] for row in build_summary("medium")}
+            summary = {row["medium"]: row["count"] for row in build_summary("medium")}
+
         elif report_type == "class":
-            summary = {row["student_class"] or "NA": row["count"] for row in build_summary("student_class")}
+            summary = {
+                row["student_class"]: row["count"]
+                for row in build_summary("student_class")
+            }
+
         elif report_type == "center":
-            summary = {row["center__center_id"] or "NA": row["count"] for row in build_summary("center__center_id")}
+            summary = {
+                row["center__center_id"]: row["count"]
+                for row in qs.values("center__center_id")
+                .annotate(count=Count("id"))
+            }
+
         elif report_type == "admission":
-            summary = {row["admission_type"] or "NA": row["count"] for row in build_summary("admission_type")}
+            summary = {
+                row["admission_type"]: row["count"]
+                for row in build_summary("admission_type")
+            }
+
         elif report_type == "percentage":
-            # Optional: summary by range buckets
-            summary = {}
-        else:
-            return Response({"error": "Invalid report type"}, status=status.HTTP_400_BAD_REQUEST)
+            summary = {
+                "range": value,
+                "students": qs.count(),
+            }
 
-        # ---------------- SERIALIZER ----------------
-        serializer = self.get_serializer(qs, many=True)
+        # ================= PAGINATION =================
+        page = self.paginate_queryset(qs)
 
-        # ---------------- RESPONSE ----------------
-        return Response(
-            {
-                "results": serializer.data,
+        if page is not None:
+            serializer = ReportRowSerializer(page, many=True)
+
+            return self.get_paginated_response({
+                "students": serializer.data,
+                "summary": summary,
                 "total": qs.count(),
                 "grand_total": base_qs.count(),
-                "summary": summary,
                 "report_type": report_type,
-            },
-            status=status.HTTP_200_OK,
-        )
+            })
 
+        serializer = ReportRowSerializer(qs, many=True)
 
+        return Response({
+            "students": serializer.data,
+            "summary": summary,
+            "total": qs.count(),
+            "grand_total": base_qs.count(),
+            "report_type": report_type,
+        })
+                
+            
+                
+            
 
 
     
@@ -665,24 +945,103 @@ class PrintLifafa(APIView):
 
 
 
+# class PrintMarksheet(APIView):
+#     """
+#     Get a single student's published marksheet in JSON format.
+#     """
+
+#     def get(self, request):
+#         qs = Student.objects.select_related("center").all()
+
+#         # ---------------- PERMISSION LOGIC ----------------
+#         user = request.user
+#         if getattr(user, "role", None) not in ["admin", "staff"]:
+#             qs = qs.filter(is_published=True)
+
+#         # ---------------- QUERY PARAMS ----------------
+#         roll_no = request.query_params.get("roll_no")
+#         center_id = request.query_params.get("center_id")
+#         student_class = request.query_params.get("student_class")
+#         session = request.query_params.get("session")
+
+#         # ---------------- FILTERS ----------------
+#         if roll_no:
+#             qs = qs.filter(roll_no__iexact=roll_no.strip())
+
+#         if center_id:
+#             qs = qs.filter(center__center_id__iexact=center_id.strip())
+
+#         if student_class:
+#             qs = qs.filter(student_class__iexact=student_class.strip())
+
+#         if session:
+#             qs = qs.filter(session__iexact=session.strip())
+
+#         student = qs.first()
+
+#         if not student:
+#             return Response(
+#                 {"error": "Marksheet not found or not published"},
+#                 status=status.HTTP_404_NOT_FOUND
+#             )
+
+#         # ---------------- MARKS ARRAY ----------------
+#         marks = []
+#         for i, paper in enumerate(
+#             [student.paper1, student.paper2, student.paper3, student.paper4],
+#             start=1
+#         ):
+#             marks.append({
+#                 "subject": f"Paper {i}",
+#                 "max_marks": 100,
+#                 "min_marks": 33,
+#                 "marks": paper if paper is not None else 0,
+#             })
+
+#         # ---------------- SERIALIZE ----------------
+#         serializer = MarksheetSerializer(student)
+#         data = serializer.data
+
+#         data["marks"] = marks
+#         data["total_words"] = (
+#             num2words(student.total).title()
+#             if student.total is not None
+#             else "Zero"
+#         )
+
+#         return Response(data, status=status.HTTP_200_OK)
+
+
 class PrintMarksheet(APIView):
     """
     Get a single student's published marksheet in JSON format.
     """
 
     def get(self, request):
+
         qs = Student.objects.select_related("center").all()
 
-        # ---------------- PERMISSION LOGIC ----------------
+        print("\n===== PRINT MARKSHEET DEBUG START =====")
+
+        # ---------------- PERMISSION ----------------
         user = request.user
+        print("User:", user)
+        print("Role:", getattr(user, "role", None))
+
         if getattr(user, "role", None) not in ["admin", "staff"]:
             qs = qs.filter(is_published=True)
+            print("Filtered: only published students")
 
         # ---------------- QUERY PARAMS ----------------
         roll_no = request.query_params.get("roll_no")
         center_id = request.query_params.get("center_id")
         student_class = request.query_params.get("student_class")
         session = request.query_params.get("session")
+
+        print("roll_no:", roll_no)
+        print("center_id:", center_id)
+        print("student_class:", student_class)
+        print("session:", session)
 
         # ---------------- FILTERS ----------------
         if roll_no:
@@ -697,16 +1056,27 @@ class PrintMarksheet(APIView):
         if session:
             qs = qs.filter(session__iexact=session.strip())
 
+        print("Filtered count:", qs.count())
+
         student = qs.first()
 
         if not student:
+            print("Student not found")
+            print("===== PRINT MARKSHEET DEBUG END =====\n")
+
             return Response(
                 {"error": "Marksheet not found or not published"},
                 status=status.HTTP_404_NOT_FOUND
             )
 
+        print("Student Found:", student.student_name)
+        print("Center Object:", student.center)
+        print("Center ID:", getattr(student.center, "center_id", None))
+        print("Center Name:", getattr(student.center, "center_name", None))
+
         # ---------------- MARKS ARRAY ----------------
         marks = []
+
         for i, paper in enumerate(
             [student.paper1, student.paper2, student.paper3, student.paper4],
             start=1
@@ -714,20 +1084,24 @@ class PrintMarksheet(APIView):
             marks.append({
                 "subject": f"Paper {i}",
                 "max_marks": 100,
-                "min_marks": 33,
+                "min_marks": 40,
                 "marks": paper if paper is not None else 0,
             })
 
-        # ---------------- SERIALIZE ----------------
+        # ---------------- SERIALIZER ----------------
         serializer = MarksheetSerializer(student)
         data = serializer.data
 
         data["marks"] = marks
+
         data["total_words"] = (
             num2words(student.total).title()
             if student.total is not None
             else "Zero"
         )
+
+        print("Final Response:", data)
+        print("===== PRINT MARKSHEET DEBUG END =====\n")
 
         return Response(data, status=status.HTTP_200_OK)
     

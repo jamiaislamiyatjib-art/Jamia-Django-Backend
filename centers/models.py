@@ -51,43 +51,20 @@ class CenterMobile(models.Model):
         return self.mobile
 
 
-# class Paper(models.Model):
+class CenterEmail(models.Model):
+    center = models.ForeignKey(
+        Center,
+        on_delete=models.CASCADE,
+        related_name="emails"
+    )
+    email = models.CharField(
+        max_length=100,
+        help_text="email id"
+    )
+    is_primary = models.BooleanField(default=False)
 
-#     SESSION_CHOICES = [
-#         ("1", "First Morning"),
-#         ("2", "Second Evening"),
-#         ("3", "Third Morning"),
-#         ("4", "Fourth Evening"),
-#     ]
-
-#     exam_name = models.CharField(max_length=200)
-#     paper_no = models.CharField(max_length=50)
-#     session = models.CharField(max_length=10, choices=SESSION_CHOICES)
-
-#     def __str__(self):
-#         return f"{self.exam_name} - {self.paper_no}"
-    
-# class Lifafa(models.Model):
-
-#     center = models.ForeignKey(
-#         Center,
-#         on_delete=models.CASCADE,
-#         related_name="lifafas"
-#     )
-
-#     exam_date = models.DateField()
-
-#     session = models.CharField(
-#         max_length=10,
-#         choices=Paper.SESSION_CHOICES
-#     )
-
-#     papers = models.ManyToManyField(Paper)
-
-#     created_at = models.DateTimeField(auto_now_add=True)
-
-#     def __str__(self):
-#         return f"{self.center.center_id} - Session {self.session}"
+    def __str__(self):
+        return self.email
 
 
 class Lifafa(models.Model):
