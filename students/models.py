@@ -24,6 +24,7 @@ class Student(models.Model):
     student_class = models.CharField(max_length=50)
     session = models.CharField(max_length=50)
     medium = models.CharField(max_length=50)
+    phone_no = models.CharField(max_length=50, null=True, blank=True)
 
     paper1 = models.PositiveIntegerField(null=True, blank=True)
     paper2 = models.PositiveIntegerField(null=True, blank=True)

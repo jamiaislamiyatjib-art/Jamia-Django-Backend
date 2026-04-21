@@ -8,37 +8,6 @@ from .models import Center
 
 
 
-# class StudentSerializer(serializers.ModelSerializer):
-#     paper1 = serializers.IntegerField(allow_null=True, required=False)
-#     paper2 = serializers.IntegerField(allow_null=True, required=False)
-#     paper3 = serializers.IntegerField(allow_null=True, required=False)
-#     paper4 = serializers.IntegerField(allow_null=True, required=False)
-    
-#     admission_type = serializers.CharField(read_only=True)
-
-#     # For writes
-#     center = serializers.PrimaryKeyRelatedField(
-#         queryset=Center.objects.all(), 
-#         required=False, 
-#         allow_null=True
-#     )
-
-#     # For reads only
-#     center_id = serializers.CharField(source="center.center_id", read_only=True)
-#     center_name = serializers.CharField(source="center.name", read_only=True)
-
-#     class Meta:
-#         model = Student
-#         fields = '__all__'
-#         read_only_fields = (
-#             "total",
-#             "avg_percentage",
-#             "result",
-#             "division",
-#             "grand_total",
-#         )
-
-
 
 class StudentSerializer(serializers.ModelSerializer):
     paper1 = serializers.IntegerField(allow_null=True, required=False)
@@ -66,6 +35,7 @@ class StudentSerializer(serializers.ModelSerializer):
             "enroll_no",
             "student_name",
             "father_husband_name",
+            "phone_no",
             "gender",
             "student_class",
             "session",
@@ -79,13 +49,20 @@ class StudentSerializer(serializers.ModelSerializer):
             "center",
             "center_id",
             "center_name",
+            "admission_type",
             "total",
             "avg_percentage",
             "result",
             "division",
             "grand_total",
-            "admission_type",
         ]
+        read_only_fields = (
+                "total",
+                "avg_percentage",
+                "result",
+                "division",
+                "grand_total",
+            )
 
     # 🔍 DEBUG CENTER ID
     def get_center_id(self, obj):
@@ -153,7 +130,7 @@ class StudentResultSerializer(serializers.ModelSerializer):
             "division",
             "city",
             "center_name",
-            "center_id"
+            "center_id",
             "is_published",
         ]
 
@@ -271,11 +248,16 @@ class MeritListSerializer(serializers.Serializer):
 
 
 
+
+
 class ReportRowSerializer(serializers.ModelSerializer):
     center_id = serializers.CharField(source="center.center_id", read_only=True)
     center_name = serializers.CharField(source="center.center_name", read_only=True)
     state = serializers.CharField(source="center.state", read_only=True)
     city = serializers.CharField(source="center.city", read_only=True)
+
+    # ✅ ADD THIS LINE (IMPORTANT)
+    admission_type = serializers.CharField(read_only=True)
 
     class Meta:
         model = Student
@@ -292,7 +274,7 @@ class ReportRowSerializer(serializers.ModelSerializer):
             "division",
             "result",
             "avg_percentage",
-            # "admission_type",
+            "admission_type",   # ✅ UNCOMMENTED
             "center_id",
             "center_name",
             "state",
