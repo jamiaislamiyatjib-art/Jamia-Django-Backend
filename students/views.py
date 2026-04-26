@@ -46,12 +46,12 @@ def normalize_class_name(name):
     name = name.lower().replace("-", "_").replace(" ", "_")
 
     mapping = {
-        "aliya_saal_awwal": "ALIYA SAAL AWWAL",
-        "aliya_saal_doam": "ALIYA SAAL DOAM",
         "ibtidai_saal_awwal": "IBTIDAI SAAL AWWAL",
         "ibtidai_saal_doam": "IBTIDAI SAAL DOAM",
         "sanviya_saal_awwal": "SANVIYA SAAL AWWAL",
         "sanviya_saal_doam": "SANVIYA SAAL DOAM",
+        "aliya_saal_awwal": "ALIYA SAAL AWWAL",
+        "aliya_saal_doam": "ALIYA SAAL DOAM",
     }
 
     return mapping.get(name, name.upper())
@@ -77,7 +77,7 @@ def normalize_enroll_no(enroll_no):
         enroll_no = enroll_no.replace(month, number)
 
     # Remove all non-digits
-    enroll_no = re.sub(r"\D", "", enroll_no)
+    enroll_no = re.sub(r"\D", "/", enroll_no)
 
     return enroll_no
 
@@ -174,8 +174,15 @@ class StudentViewSet(viewsets.ModelViewSet):
         if center_id and center_id != "ALL":
             queryset = queryset.filter(center__center_id=center_id)
 
+        
         if student_class and student_class != "ALL":
-            queryset = queryset.filter(student_class=student_class)
+            normalized_space = student_class.replace("_", " ").upper()
+            normalized_underscore = student_class.replace(" ", "_").upper()
+
+            queryset = queryset.filter(
+                Q(student_class__iexact=normalized_space) |
+                Q(student_class__iexact=normalized_underscore)
+            )
 
     
         if search:
@@ -204,6 +211,13 @@ class StudentViewSet(viewsets.ModelViewSet):
                     | Q(city__icontains=word)
                     | Q(place__icontains=word)
                     | Q(center__center_name__icontains=word)
+                    | Q(center__center_id__icontains=word)
+                    | Q(gender__iexact=word)
+                    | Q(phone_no__icontains=word)
+                    | Q(result__icontains=word)
+                    | Q(grand_total__icontains=word)
+                    | Q(division__icontains=word)
+                    | Q(avg_percentage__icontains=word)
                 )
                 
         return queryset.order_by("-id")
@@ -268,7 +282,8 @@ class StudentViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             Student.objects.create(
                 student_id=student.student_id,  
-                enroll_no=student.enroll_no, 
+                # enroll_no=student.enroll_no, 
+                enroll_no=normalize_enroll_no(student.enroll_no),
                 student_name=student.student_name,
                 father_husband_name=student.father_husband_name,
                 student_class=next_class,
@@ -338,19 +353,42 @@ class StudentViewSet(viewsets.ModelViewSet):
 
     
     # ================= PERFORM CREATE =================
+    # def perform_create(self, serializer):
+    #     user = self.request.user
+
+    #     with transaction.atomic():
+
+    #         if getattr(user, "role", None) == "staff":
+    #             serializer.save(
+    #                 center=getattr(user, "center", None),
+    #                 is_admit_card_published=True  
+    #             )
+    #         else:
+    #             serializer.save(
+    #                 is_admit_card_published=True 
+    #             )
+    
     def perform_create(self, serializer):
         user = self.request.user
 
         with transaction.atomic():
 
+            data = serializer.validated_data
+
+            # 🔥 Normalize class before save
+            if "student_class" in data:
+                data["student_class"] = normalize_class_name(data["student_class"])
+
             if getattr(user, "role", None) == "staff":
                 serializer.save(
                     center=getattr(user, "center", None),
-                    is_admit_card_published=True  
+                    is_admit_card_published=True,
+                    student_class=data.get("student_class")
                 )
             else:
                 serializer.save(
-                    is_admit_card_published=True 
+                    is_admit_card_published=True,
+                    student_class=data.get("student_class")
                 )
    
     # ================= TOGGLE PUBLISH =================
