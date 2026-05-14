@@ -100,7 +100,7 @@ def normalize_class_name(class_name):
 class StandardResultsSetPagination(PageNumberPagination):
     page_size = 10
     page_size_query_param = 'limit'
-    max_page_size = 300
+    max_page_size = 10000
 
 
 class StudentViewSet(viewsets.ModelViewSet):
@@ -154,20 +154,34 @@ class StudentViewSet(viewsets.ModelViewSet):
                 student_id__iexact=student_id.strip()
             )
 
+    
         
         # ================= GLOBAL SEARCH BLOCK =================
-        if search and global_search:  
+        if search and global_search:
             search = search.strip()
 
-            return queryset.filter(
-                Q(student_id__iexact=search) |
-                Q(enroll_no__iexact=search) |
-                Q(roll_no__iexact=search) |
-                Q(student_name__icontains=search) |
-                Q(student_class__iexact=search) |
-                Q(session__iexact=search)
-            ).order_by("-session")
-            
+            words = search.split()
+
+            for word in words:
+                queryset = queryset.filter(
+                    Q(student_id__iexact=word) |
+                    Q(enroll_no__iexact=word) |
+                    Q(roll_no__iexact=word) |
+                    Q(student_name__icontains=word) |
+                    Q(student_class__icontains=word) |
+                    Q(father_husband_name__icontains=word) |
+                    Q(gender__icontains=word) |
+                    Q(medium__icontains=word) |
+                    Q(city__icontains=word) |
+                    Q(place__icontains=word) |
+                    Q(session__iexact=word) |
+                    Q(center__center_name__icontains=word) |
+                    Q(center__center_id__icontains=word) |
+                    Q(phone_no__icontains=word)
+                )
+
+            return queryset.order_by("-session")
+                    
         if session:
             queryset = queryset.filter(session=session)
             
@@ -202,11 +216,11 @@ class StudentViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(
                     Q(student_name__icontains=word)
                     | Q(student_id__iexact=word)
-                    | Q(roll_no__icontains=word)
+                    | Q(roll_no__iexact=word)
                     | Q(enroll_no__icontains=word)
                     | Q(father_husband_name__icontains=word)
                     | Q(student_class__icontains=word)
-                    | Q(session__icontains=word)
+                    | Q(session__iexact=word)
                     | Q(medium__icontains=word)
                     | Q(city__icontains=word)
                     | Q(place__icontains=word)
@@ -249,7 +263,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             )
 
         # Normalize class (handles underscore/space issue)
-        current_class = student.student_class.replace("_", " ").upper()
+        current_class = student.student_class.replace("_", " ").strip().upper()
         next_class = CLASS_PROMOTION_MAP.get(current_class)
 
         if not next_class:
@@ -299,6 +313,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             {"message": f"Student promoted to {next_class} ({next_session}) successfully."},
             status=status.HTTP_201_CREATED
         )
+    
         
     def update(self, request, *args, **kwargs):
         print("===== DEBUG START =====")
@@ -351,22 +366,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             "note": "Preview only. Final values assigned on save.",
         })
 
-    
-    # ================= PERFORM CREATE =================
-    # def perform_create(self, serializer):
-    #     user = self.request.user
 
-    #     with transaction.atomic():
-
-    #         if getattr(user, "role", None) == "staff":
-    #             serializer.save(
-    #                 center=getattr(user, "center", None),
-    #                 is_admit_card_published=True  
-    #             )
-    #         else:
-    #             serializer.save(
-    #                 is_admit_card_published=True 
-    #             )
     
     def perform_create(self, serializer):
         user = self.request.user
@@ -1023,28 +1023,59 @@ class MeritList(APIView):
     serializer_class = MeritListSerializer
     pagination_class = MeritPagination
 
+    
     def get(self, request):
+
         session = request.query_params.get("session")
         student_class = request.query_params.get("student_class")
+        search = request.query_params.get("search", "").strip()
 
-        if not session:
-            return Response({"error": "session required"}, status=400)
+        # ================= BASE QUERYSET =================
+        current_students = Student.objects.select_related("center").all()
 
-        # ✅ treat session as string (important)
-        current_year = session.strip()
+        # ================= SESSION FILTER =================
+        if session and not search:
+            current_year = session.strip()
+
+            current_students = current_students.filter(
+                session=current_year
+            )
+
+        else:
+            current_year = str(datetime.now().year)
+
         previous_year = str(int(current_year) - 1)
 
-        # 🔹 Step 1: Current session students
-        current_students = Student.objects.select_related("center").filter(
-            session=current_year
-        )
-
-        if student_class:
+        # ================= CLASS FILTER =================
+        if student_class and student_class != "ALL":
             normalized_class = student_class.replace("_", " ")
+
             current_students = current_students.filter(
                 Q(student_class=student_class) |
                 Q(student_class=normalized_class)
             )
+
+        # ================= GLOBAL SEARCH =================
+        if search:
+            words = search.split()
+
+            for word in words:
+                current_students = current_students.filter(
+                    Q(student_id__iexact=word) |
+                    Q(enroll_no__iexact=word) |
+                    Q(roll_no__iexact=word) |
+                    Q(student_name__icontains=word) |
+                    Q(student_class__icontains=word) |
+                    Q(father_husband_name__icontains=word) |
+                    Q(gender__icontains=word) |
+                    Q(medium__icontains=word) |
+                    Q(city__icontains=word) |
+                    Q(place__icontains=word) |
+                    Q(session__iexact=word) |
+                    Q(center__center_name__icontains=word) |
+                    Q(center__center_id__icontains=word) |
+                    Q(phone_no__icontains=word)
+                )
 
         if not current_students.exists():
             paginator = self.pagination_class()

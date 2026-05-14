@@ -42,11 +42,11 @@ class CenterViewSet(ModelViewSet):
         'mobile_numbers__mobile',
         'emails__email',
     ]
-
+    
     @action(detail=False, methods=["get"], url_path="current-year")
     def current_year(self, request):
 
-        year = str(datetime.now().year) 
+        year = str(datetime.now().year)
 
         student_subquery = Student.objects.filter(
             center_id=OuterRef("center_id"),
@@ -55,14 +55,21 @@ class CenterViewSet(ModelViewSet):
 
         queryset = self.get_queryset().annotate(
             has_students=Exists(student_subquery)
-        ).filter(has_students=True)
+        ).filter(
+            has_students=True
+        )
+
+        # ✅ THIS IS REQUIRED FOR SEARCH TO WORK
+        queryset = self.filter_queryset(queryset)
 
         page = self.paginate_queryset(queryset)
+
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
 
         serializer = self.get_serializer(queryset, many=True)
+
         return Response(serializer.data)
     
     
