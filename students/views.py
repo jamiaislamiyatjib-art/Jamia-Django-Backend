@@ -296,10 +296,10 @@ class StudentViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             Student.objects.create(
                 student_id=student.student_id,  
-                # enroll_no=student.enroll_no, 
                 enroll_no=normalize_enroll_no(student.enroll_no),
                 student_name=student.student_name,
                 father_husband_name=student.father_husband_name,
+                phone_no=student.phone_no,
                 student_class=next_class,
                 session=next_session,
                 medium=student.medium,
@@ -307,6 +307,7 @@ class StudentViewSet(viewsets.ModelViewSet):
                 center=student.center,
                 gender=student.gender,
                 place=student.place,
+                is_admit_card_published=student.is_admit_card_published,
             )
 
         return Response(
