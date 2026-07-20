@@ -55,6 +55,7 @@ class StudentSerializer(serializers.ModelSerializer):
             "result",
             "division",
             "grand_total",
+            "is_published", 
         ]
         read_only_fields = (
                 "total",

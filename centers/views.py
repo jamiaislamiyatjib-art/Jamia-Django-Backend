@@ -19,8 +19,13 @@ from students.models import Student
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from students.models import Student
-from .models import Lifafa
+
+from django.db.models import Count
+
+from academics.models import ExamTimeTable
+
+
+
 
 
 class CenterViewSet(ModelViewSet):
@@ -73,130 +78,354 @@ class CenterViewSet(ModelViewSet):
         return Response(serializer.data)
     
     
+# =========================
+# CLASS NORMALIZER
+# =========================
+def normalize_class_name(value):
+
+    if not value:
+        return ""
+
+    value = str(value).upper().strip()
+
+    replacements = {
+
+        "FIRST": "1",
+        "FIRST CLASS": "1",
+        "CLASS 1": "1",
+
+        "SECOND": "2",
+        "SECOND CLASS": "2",
+        "CLASS 2": "2",
+
+        "THIRD": "3",
+        "THIRD CLASS": "3",
+        "CLASS 3": "3",
+
+        "FOURTH": "4",
+        "FOURTH CLASS": "4",
+        "CLASS 4": "4",
+
+    }
+
+    return replacements.get(value, value)
+
 
 
 class LifafaViewSet(viewsets.ReadOnlyModelViewSet):
+
     queryset = Lifafa.objects.all()
+
     serializer_class = LifafaSerializer
-    pagination_class = None  # IMPORTANT FOR PRINT
+
+    pagination_class = None
+
 
     # =========================
     # FILTER LIFAFA
     # =========================
     def get_queryset(self):
 
-        queryset = Lifafa.objects.select_related("center").prefetch_related("papers")
+        queryset = (
+            Lifafa.objects
+            .select_related("center")
+            .prefetch_related("papers")
+        )
 
-        center_id = self.request.query_params.get("center_id")
-        session = self.request.query_params.get("session")
 
-        print("CENTER:", center_id)
-        print("SESSION:", session)
+        center_id = self.request.query_params.get(
+            "center_id"
+        )
+
+        session = self.request.query_params.get(
+            "session"
+        )
+
 
         if center_id:
-            queryset = queryset.filter(center_id=center_id)
+
+            queryset = queryset.filter(
+                center_id=center_id
+            )
+
 
         if session and session != "all":
-            queryset = queryset.filter(session=session)
 
-        print("RESULT COUNT:", queryset.count())
+            queryset = queryset.filter(
+                session=session
+            )
+
 
         return queryset
+
+
 
     # =========================
     # LIFAFA STATS API
     # =========================
-    @action(detail=False, methods=["get"])
+    @action(
+        detail=False,
+        methods=["get"]
+    )
     def stats(self, request):
 
-        center_id = request.GET.get("center_id")
-        session = request.GET.get("session")
+        center_id = request.GET.get(
+            "center_id"
+        )
+
+        session = request.GET.get(
+            "session"
+        )
+
 
         if not center_id:
-            return Response({"error": "center_id required"}, status=400)
 
-        lifafas = Lifafa.objects.filter(center_id=center_id)
+            return Response(
+                {
+                    "error":
+                    "center_id required"
+                },
+                status=400
+            )
+
+
+        lifafas = (
+            Lifafa.objects
+            .select_related("center")
+            .prefetch_related("papers")
+            .filter(
+                center_id=center_id
+            )
+        )
+
 
         if session and session != "all":
-            lifafas = lifafas.filter(session=session)
 
-        print("========== LIFAFA DEBUG START ==========")
-        print("Center:", center_id)
-        print("Session:", session)
+            lifafas = lifafas.filter(
+                session=session
+            )
+
 
         result = []
 
+
         for lifafa in lifafas:
 
-            exam_year = lifafa.exam_date.year if lifafa.exam_date else None
 
-            print("\nLifafa ID:", lifafa.id)
-            print("Exam Year:", exam_year)
+            # =====================================
+            # GET EXAM DATE FROM EXAM TIME TABLE
+            # =====================================
+
+            exam_date = (
+                ExamTimeTable.objects
+                .filter(
+                    center=lifafa.center
+                )
+                .order_by(
+                    "exam_date"
+                )
+                .values_list(
+                    "exam_date",
+                    flat=True
+                )
+                .first()
+            )
+
+
+
+            if not exam_date:
+                continue
+
+
+
+            # =========================
+            # STUDENT COUNT
+            # =========================
 
             students = Student.objects.filter(
+
                 center_id=center_id,
-                session=str(exam_year)
+
+                session=lifafa.session
+
+            ).only(
+                "student_class",
+                "medium"
             )
 
-            print("Students count:", students.count())
+
 
             stats = (
+
                 students
-                .values("student_class", "medium")
-                .annotate(count=Count("id"))
+
+                .values(
+                    "student_class",
+                    "medium"
+                )
+
+                .annotate(
+                    count=Count("id")
+                )
+
             )
+
+
 
             stats_dict = {}
 
+
+
             for row in stats:
-                class_name = (row["student_class"] or "").upper().strip()
-                medium = (row["medium"] or "").lower().strip()
+
+
+                class_name = normalize_class_name(
+                    row["student_class"]
+                )
+
+
+                medium = (
+                    row["medium"] or ""
+                ).lower().strip()
+
+
 
                 if class_name not in stats_dict:
+
                     stats_dict[class_name] = {
-                        "total": 0,
-                        "urdu": 0,
-                        "hindi": 0
+
+                        "total":0,
+                        "urdu":0,
+                        "hindi":0
+
                     }
 
-                stats_dict[class_name]["total"] += row["count"]
+
+
+                stats_dict[class_name]["total"] += (
+                    row["count"]
+                )
+
+
 
                 if medium == "urdu":
-                    stats_dict[class_name]["urdu"] += row["count"]
+
+                    stats_dict[class_name]["urdu"] += (
+                        row["count"]
+                    )
+
 
                 elif medium == "hindi":
-                    stats_dict[class_name]["hindi"] += row["count"]
+
+                    stats_dict[class_name]["hindi"] += (
+                        row["count"]
+                    )
+
+
+
 
             papers = []
 
-            for paper in lifafa.papers.all():
 
-                normalized = paper.exam_name.replace("-", " SAAL ").upper()
+            total_urdu = 0
 
-                stat = stats_dict.get(normalized, {
-                    "total": 0,
-                    "urdu": 0,
-                    "hindi": 0
-                })
+            total_hindi = 0
 
+            total_students = 0
+
+
+
+
+            for paper in lifafa.papers.all().order_by(
+                "paper_no"
+            ):
+
+
+                normalized = normalize_class_name(
+                    paper.exam_name
+                )
+
+
+
+                stat = stats_dict.get(
+
+                    normalized,
+
+                    {
+                        "total":0,
+                        "urdu":0,
+                        "hindi":0
+                    }
+
+                )
                 papers.append({
-                    "exam_name": paper.exam_name,
-                    "paper_no": paper.paper_no,
-                    "total": stat["total"],
-                    "urdu": stat["urdu"],
-                    "hindi": stat["hindi"]
+
+                    "exam_name":
+                        paper.exam_name,
+
+                    "paper_no":
+                        paper.paper_no,
+
+                    "total":
+                        stat["total"],
+
+                    "urdu":
+                        stat["urdu"],
+
+                    "hindi":
+                        stat["hindi"]
+
                 })
+
+                total_urdu += stat["urdu"]
+
+                total_hindi += stat["hindi"]
+
+                total_students += stat["total"]
 
             result.append({
-                "id": lifafa.id,
-                "center": lifafa.center.center_name,
-                "center_id": lifafa.center.center_id,
-                "exam_date": lifafa.exam_date,
-                "session": lifafa.session,
-                "session_display": lifafa.get_session_display(),
-                "papers": papers
+
+                "id":
+                    lifafa.id,
+
+                "center":
+                    lifafa.center.center_name,
+
+                "center_id":
+                    lifafa.center.center_id,
+
+                # NOW COMING FROM EXAM TIME TABLE
+                "exam_date":
+                    exam_date,
+
+
+                "session":
+                    lifafa.session,
+
+
+                "session_display":
+                    lifafa.get_session_display(),
+
+
+
+                "papers":
+                    papers,
+
+
+
+                "total_urdu":
+                    total_urdu,
+
+
+                "total_hindi":
+                    total_hindi,
+
+
+                "total_students":
+                    total_students
+
             })
 
-        print("========== LIFAFA DEBUG END ==========")
+
 
         return Response(result)

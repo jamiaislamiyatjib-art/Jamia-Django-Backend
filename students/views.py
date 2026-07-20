@@ -877,40 +877,83 @@ class StudentResultView(APIView):
         serializer = StudentResultSerializer(student)
         return Response(serializer.data)
 
-# ================= Student Admit Card View =================
+
 class StudentAdmitCardView(APIView):
     permission_classes = [AllowAny]
-    
-    """
-    Get a student's published admit card by center_id + roll_no + session
-    """
+
     def post(self, request):
         center_id = request.data.get("center_id")
         roll_no = request.data.get("roll_no")
         session = request.data.get("session")
 
-        if not all([center_id, roll_no, session]):
+        # -------------------------
+        # Validate required fields
+        # -------------------------
+        if not center_id or not session:
             return Response(
-                {"error": "Center ID, Roll No and Session are required"},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    "error": "Center ID and Session are required."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        student = Student.objects.filter(
+        # =====================================================
+        # SINGLE ADMIT CARD
+        # =====================================================
+        if roll_no:
+
+            student = Student.objects.filter(
+                center__center_id=center_id,
+                roll_no=roll_no,
+                session=session,
+                is_admit_card_published=True,
+            ).first()
+
+            if not student:
+                return Response(
+                    {
+                        "error": "Admit card not found or not published."
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            serializer = AdmitCardSerializer(student)
+
+            return Response(
+                {
+                    "type": "single",
+                    "data": serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # =====================================================
+        # BULK ADMIT CARDS
+        # =====================================================
+        students = Student.objects.filter(
             center__center_id=center_id,
-            roll_no=roll_no,
             session=session,
-            is_admit_card_published=True
-        ).first()
+            is_admit_card_published=True,
+        ).order_by("roll_no")
 
-        if not student:
+        if not students.exists():
             return Response(
-                {"error": "Admit card not found or not published"},
-                status=status.HTTP_404_NOT_FOUND
+                {
+                    "error": "No published admit cards found for this center."
+                },
+                status=status.HTTP_404_NOT_FOUND,
             )
 
-        serializer = AdmitCardSerializer(student)
-        return Response(serializer.data)
+        serializer = AdmitCardSerializer(students, many=True)
 
+        return Response(
+            {
+                "type": "bulk",
+                "total_students": students.count(),
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 
@@ -1004,6 +1047,9 @@ class PrintMarksheet(APIView):
         # ---------------- SERIALIZER ----------------
         serializer = MarksheetSerializer(student)
         data = serializer.data
+        
+        if student.result == "Supply":
+            data["result"] = "Fail"
 
         data["marks"] = marks
 
